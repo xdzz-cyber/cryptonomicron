@@ -45,13 +45,31 @@
 
       <template v-if="tickers.length > 0">
         <hr class="w-full border-t border-gray-600 my-4" />
+        <div>
+          <button
+            v-if="page > 1"
+            @click="page -= 1"
+            class="my-4 mx-2 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          >
+            Back
+          </button>
+          <button
+            v-if="hasNextPage"
+            @click="page += 1"
+            class="my-4 mx-2 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+          >
+            Forward
+          </button>
+          <div>Filter: <input v-model="filter" /></div>
+        </div>
+        <hr class="w-full border-t border-gray-600 my-4" />
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
-            v-for="t in tickers"
+            v-for="t in paginatedTickers"
             :key="t.name"
             @click="select(t)"
             :class="{
-              'border-4': selected == t
+              'border-4': selectedTicker == t
             }"
             class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
           >
@@ -60,7 +78,7 @@
                 {{ t.name }} - USD
               </dt>
               <dd class="mt-1 text-3xl font-semibold text-gray-900">
-                {{ t.price }}
+                {{ formatPrice(t.price) }}
               </dd>
             </div>
             <div class="w-full border-t border-gray-200"></div>
@@ -86,13 +104,13 @@
         </dl>
         <hr class="w-full border-t border-gray-600 my-4" />
       </template>
-      <section v-if="selected" class="relative">
+      <section v-if="selectedTicker" class="relative">
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
-          {{ selected.name }}
+          {{ selectedTicker.name }}
         </h3>
         <div class="flex items-end border-gray-600 border-b border-l h-64">
           <div
-            v-for="(bar, index) in normalizeGraph()"
+            v-for="(bar, index) in normalizedGraph"
             :key="index"
             :style="{
               height: `${bar}%`
@@ -101,7 +119,7 @@
           ></div>
         </div>
         <button
-          @click="selected = null"
+          @click="selectedTicker = null"
           type="button"
           class="absolute top-0 right-0"
         >
@@ -133,43 +151,113 @@
 </template>
 
 <script>
+import { subscribeToTicker, unsubscribeFromTicker } from "./api";
+
 export default {
   name: "App",
 
   data() {
     return {
-      ticker: "default",
+      ticker: "",
       tickers: [],
-      selected: null,
-      graph: []
+      selectedTicker: null,
+      graph: [],
+      page: 1,
+      filter: ""
     };
   },
 
-  created(){
+  created() {
+    const windowData = Object.fromEntries(
+      new URL(window.location).searchParams.entries()
+    );
+
+    const VALID_KEYS = ["filter", "page"];
+
+    VALID_KEYS.forEach(key => {
+      if (windowData[key]) {
+        this[key] = windowData[key];
+      }
+    });
+
+    // if(windowData.filter){
+    //   this.filter = windowData.filter;
+    // }
+
+    // if(windowData.page){
+    //   this.page = windowData.page;
+    // }
+
     const tickersData = localStorage.getItem("cryptonomicron-list");
 
-    if(tickersData){
+    if (tickersData) {
       this.tickers = JSON.parse(tickersData);
-      this.tickers.forEach(el => {
-        this.subscribeToUpdates(el.name);
+      this.tickers.forEach(ticker => {
+        subscribeToTicker(ticker.name, newPrice => {
+          this.updateTicker(ticker.name, newPrice);
+        });
       });
+    }
+
+    setInterval(this.updateTickers, 5000);
+  },
+
+  computed: {
+    pageStateOptions() {
+      return {
+        filter: this.filter,
+        page: this.page
+      };
+    },
+
+    startIndex() {
+      return (this.page - 1) * 6;
+    },
+
+    endIndex() {
+      return this.page * 6;
+    },
+
+    paginatedTickers() {
+      return this.filteredTickers.slice(this.startIndex, this.endIndex);
+    },
+
+    filteredTickers() {
+      return this.tickers.filter(ticker => ticker.name.includes(this.filter));
+    },
+
+    hasNextPage() {
+      return this.filteredTickers.length > this.endIndex;
+    },
+
+    normalizedGraph() {
+      const maxValue = Math.max(...this.graph);
+      const minValue = Math.min(...this.graph);
+
+      if (maxValue === minValue) {
+        return this.graph.map(() => 50);
+      }
+
+      return this.graph.map(
+        price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
+      );
     }
   },
 
   methods: {
-    subscribeToUpdates(tickerName){
-      setInterval(async () => {
-        const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_key=7641a5833e5d0c3cdd9ad5576939a3c9e4925b95ca3e23510b174cede3f26484`
-        );
-        const data = await f.json();
-        this.tickers.find(el => el.name === tickerName).price =
-          data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-        if (this.selected?.name === tickerName) {
-          this.graph.push(data.USD);
-        }
-      }, 3000);
-      this.ticker = "";
+    updateTicker(tickerName, price) {
+      this.tickers
+        .filter(t => t.name === tickerName)
+        .forEach(t => (t.price = price));
+    },
+
+    formatPrice(price) {
+      if (price === "-") {
+        return price;
+      }
+      return price > 1
+        ? parseFloat(price).toFixed(2)
+        : parseFloat(price).toPrecision(2);
     },
 
     add() {
@@ -178,30 +266,52 @@ export default {
         price: "-"
       };
 
-      this.tickers.push(newTicker);
-
-      localStorage.setItem("cryptonomicron-list", JSON.stringify(this.tickers));
-
-       this.subscribeToUpdates(newTicker.name);
-
-      
+      this.tickers = [...this.tickers, newTicker];
+      this.ticker = "";
+      this.filter = "";
+      subscribeToTicker(newTicker.name, newPrice =>
+        this.updateTicker(newTicker.name, newPrice)
+      );
     },
 
     handleDelete(deleteElement) {
       this.tickers = this.tickers.filter(el => el !== deleteElement);
-    },
-
-    normalizeGraph() {
-      const maxValue = Math.max(...this.graph);
-      const minValue = Math.min(...this.graph);
-      return this.graph.map(
-        price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
-      );
+      if (this.selectedTicker === deleteElement) {
+        this.selectedTicker = null;
+      }
+      unsubscribeFromTicker(deleteElement.name);
     },
 
     select(t) {
-      this.selected = t;
+      this.selectedTicker = t;
+    }
+  },
+
+  watch: {
+    tickers() {
+      localStorage.setItem("cryptonomicron-list", JSON.stringify(this.tickers));
+    },
+
+    selectedTicker() {
       this.graph = [];
+    },
+
+    paginatedTickers() {
+      if (this.paginatedTickers.length === 0 && this.page > 1) {
+        this.page -= 1;
+      }
+    },
+
+    filter() {
+      this.page = 1;
+    },
+
+    pageStateOptions(value) {
+      window.history.pushState(
+        null,
+        document.title,
+        `${window.location.pathname}?filter=${value.filter}&page=${value.page}`
+      );
     }
   }
 };
