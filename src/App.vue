@@ -180,14 +180,6 @@ export default {
       }
     });
 
-    // if(windowData.filter){
-    //   this.filter = windowData.filter;
-    // }
-
-    // if(windowData.page){
-    //   this.page = windowData.page;
-    // }
-
     const tickersData = localStorage.getItem("cryptonomicron-list");
 
     if (tickersData) {
@@ -248,13 +240,19 @@ export default {
     updateTicker(tickerName, price) {
       this.tickers
         .filter(t => t.name === tickerName)
-        .forEach(t => (t.price = price));
+        .forEach(t => {
+          if (t === this.selectedTicker) {
+            this.graph.push(price);
+          }
+          t.price = price;
+        });
     },
 
     formatPrice(price) {
       if (price === "-") {
         return price;
       }
+      console.log(price);
       return price > 1
         ? parseFloat(price).toFixed(2)
         : parseFloat(price).toPrecision(2);
